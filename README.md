@@ -157,10 +157,21 @@ Hardware setup is the same: Unit MIDI on the Grove port, set to **BYPASS**.
 
 Settings: Bank, Patch, Bank Level (per-bank loudness trim, 0–250%), Voices (1–10, per bank), Filter Cutoff and Filter Res
 (**PATCH** means the patch's own setting; on DX7/piano moving the cutoff adds a
-24 dB low-pass), Reverb, MIDI Channel and Volume. All of them are saved to flash.
+24 dB low-pass), Attack / Decay / Sustain / Release, Reverb, MIDI Channel and
+Volume. All of them are saved to flash.
+
+The envelope controls are per bank and start on **PATCH**:
+- **Juno, Pluck, Wavetable, Analog:** a real ADSR replaces the patch's main
+  envelope (attack 1 ms–5 s, decay/release 5 ms–10 s, sustain %). On the Juno this
+  is the single envelope that drives both VCA and VCF, just like the original.
+- **DX7:** each operator has its own envelope, which also shapes the timbre, so the
+  controls scale them instead: Attack/Decay/Release multiply every operator's
+  segment times (×0.1–×10) and Sustain scales their sustain levels.
+- **Piano:** not available (AMY's piano shapes its own decay).
+- Step below the minimum to return a control to PATCH.
 
 MIDI: notes, sustain, bend and mod wheel go to AMY. CC 74 / 71 set filter cutoff /
-resonance, CC 91 sets reverb, CC 7 sets volume, and program change selects a patch
+resonance, CC 73 / 75 / 79 / 72 set attack / decay / sustain / release, CC 91 sets reverb, CC 7 sets volume, and program change selects a patch
 in the current bank.
 
 Build: `pio run -d amy` (CI publishes `CardputerAMY-app.bin` / `-full.bin`).

@@ -18,6 +18,9 @@
 #include "amy_cmd.h"
 #include "small_reverb.h"
 #include "custom_patches.h"
+#include "env_override.h"
+#include "patches.h"  // AMY's built-in patch strings (to rewrite DX7 envelopes)
+#include <stddef.h>
 
 extern "C" {
 void amy_event_midi_message_received(uint8_t* data, uint32_t len, uint8_t sysex);
@@ -47,7 +50,11 @@ struct Settings {
   uint8_t volume = 170;
   uint8_t rotation = 0xFF;        // 0xFF = auto landscape
   uint8_t level[NUM_BANKS] = {100, 100, 100, 100, 100, 100};  // per-bank level trim, percent
-  uint8_t version = 3;
+  uint8_t version = 4;
+  // --- v4 additions (appended so v3 settings can be migrated) ---
+  // Per-bank A/D/S/R override, OVERRIDE_OFF = use the patch's envelope
+  uint8_t env[NUM_BANKS][4] = {{128, 128, 128, 128}, {128, 128, 128, 128}, {128, 128, 128, 128},
+                               {128, 128, 128, 128}, {128, 128, 128, 128}, {128, 128, 128, 128}};
 };
 static Settings g_set;
 static Preferences g_prefs;
@@ -147,16 +154,50 @@ static void amyDefineCustomPatch() {
   }
 }
 
+static bool envOverridden() {
+  for (int i = 0; i < 4; i++) if (g_set.env[g_set.bank][i] != OVERRIDE_OFF) return true;
+  return false;
+}
+
+// DX7 with an envelope override: store a rewritten copy as USER_PATCH.
+static void amyDefineDx7EnvPatch() {
+  static char msg[1200];
+  snprintf(msg, sizeof(msg), "K%dS%dZ", USER_PATCH, RESET_PATCH);
+  amy_add_message(msg);
+  envov::rewriteDx7(patch_commands[128 + g_set.patch[BANK_DX7]], g_set.env[BANK_DX7], [](const std::string& cmd) {
+    snprintf(msg, sizeof(msg), "K%d%sZ", USER_PATCH, cmd.c_str());
+    amy_add_message(msg);
+  });
+}
+
+// Absolute ADSR on osc 0 for Juno and the custom banks.
+static void amyApplyAbsoluteEnv() {
+  if (g_set.bank == BANK_DX7 || g_set.bank == BANK_PIANO || !envOverridden()) return;
+  std::string m = envov::absoluteEnvMessage(g_set.env[g_set.bank]);
+  amy_add_message((char*)m.c_str());
+}
+
 static void amyLoadPatch() {
+  bool dxEnv = g_set.bank == BANK_DX7 && envOverridden();
   if (isCustomBank(g_set.bank)) amyDefineCustomPatch();
+  else if (dxEnv) amyDefineDx7EnvPatch();
   amy_event e = amy_default_event();
   e.synth = 1;
-  e.patch_number = amyPatchNumber();
+  e.patch_number = dxEnv ? USER_PATCH : amyPatchNumber();
   e.num_voices = g_set.voices[g_set.bank];
   amy_add_event(&e);
   amyApplyLevel();
   g_filterTypeSet = false;
   amyApplyFilter();  // re-apply the user's filter override, if any
+  amyApplyAbsoluteEnv();
+}
+
+// Envelope setting changed: DX7 needs its patch rebuilt, the others just get the
+// new osc-0 envelope (or a reload when it's been set back to PATCH).
+static void amyEnvChanged() {
+  if (g_set.bank == BANK_PIANO) return;
+  if (g_set.bank == BANK_DX7 || !envOverridden()) amyLoadPatch();
+  else amyApplyAbsoluteEnv();
 }
 
 // Reverb runs on the mono output (SmallReverb) rather than AMY's own, which
@@ -196,6 +237,10 @@ struct MidiToAmy : syn::MidiParser::Handler {
       case 7:   g_set.volume = v * 2; M5.Speaker.setVolume(g_set.volume); break;
       case 74:  g_set.cutoff = v; amyApplyFilter(); break;
       case 71:  g_set.res = v; amyApplyFilter(); break;
+      case 73:  g_set.env[g_set.bank][0] = v; amyEnvChanged(); break;
+      case 75:  g_set.env[g_set.bank][1] = v; amyEnvChanged(); break;
+      case 79:  g_set.env[g_set.bank][2] = v; amyEnvChanged(); break;
+      case 72:  g_set.env[g_set.bank][3] = v; amyEnvChanged(); break;
       case 91:  g_set.reverb = v; amyApplyReverb(); break;
       case 120: case 123: panic(); break;
       default:  amyMidi(0xB0, cc, v, 3); break;  // sustain, mod wheel, etc.
@@ -221,6 +266,7 @@ static void handleCmd(const Cmd& c) {
     case CMD_REVERB:     amyApplyReverb(); break;
     case CMD_PANIC:      panic(); break;
     case CMD_LEVEL:      amyApplyLevel(); break;
+    case CMD_ENV:        amyEnvChanged(); break;
   }
 }
 
@@ -293,8 +339,14 @@ static void saveSoon() { g_saveAt = millis() + 2000; }
 static void loadSettings() {
   g_prefs.begin("camy", true);
   Settings s;
-  if (g_prefs.getBytesLength("set") == sizeof(Settings) && g_prefs.getBytes("set", &s, sizeof(s)) && s.version == 3)
+  size_t len = g_prefs.getBytesLength("set");
+  if (len == sizeof(Settings) && g_prefs.getBytes("set", &s, sizeof(s)) && s.version == 4) {
     g_set = s;
+  } else if (len == offsetof(Settings, env) && g_prefs.getBytes("set", &s, len) && s.version == 3) {
+    g_set = s;  // v3 -> v4: keep everything, envelopes start on PATCH
+    g_set.version = 4;
+    for (auto& b : g_set.env) for (auto& x : b) x = OVERRIDE_OFF;
+  }
   g_prefs.end();
   if (g_set.bank >= NUM_BANKS) g_set.bank = BANK_JUNO;
   for (int b = 0; b < NUM_BANKS; b++) {
@@ -319,8 +371,9 @@ static String g_toast;
 static uint32_t g_toastUntil = 0;
 static void toast(const String& s, uint32_t ms = 1500) { g_toast = s; g_toastUntil = millis() + ms; g_dirty = true; }
 
-enum ParamId { P_BANK, P_PATCH, P_LEVEL, P_VOICES, P_CUTOFF, P_RES, P_REVERB, P_MIDICH, P_VOLUME, P_COUNT };
+enum ParamId { P_BANK, P_PATCH, P_LEVEL, P_VOICES, P_CUTOFF, P_RES, P_ATTACK, P_DECAY, P_SUSTAIN, P_RELEASE, P_REVERB, P_MIDICH, P_VOLUME, P_COUNT };
 static const char* const kParamNames[P_COUNT] = {"Bank", "Patch", "Bank Level", "Voices", "Filter Cutoff", "Filter Res",
+                                                 "Attack", "Decay", "Sustain", "Release",
                                                  "Reverb", "MIDI Channel", "Volume"};
 static const char* const kBankNames[NUM_BANKS] = {"JUNO-6", "DX7", "PIANO", "PLUCK", "WAVETABLE", "ANALOG"};
 
@@ -342,6 +395,19 @@ static String paramValue(int id) {
     case P_VOICES: return String(g_set.voices[g_set.bank]);
     case P_CUTOFF: return g_set.cutoff == OVERRIDE_OFF ? String("PATCH") : String(g_set.cutoff);
     case P_RES:    return g_set.res == OVERRIDE_OFF ? String("PATCH") : String(g_set.res);
+    case P_ATTACK: case P_DECAY: case P_SUSTAIN: case P_RELEASE: {
+      int k = id - P_ATTACK;
+      uint8_t v = g_set.env[g_set.bank][k];
+      if (g_set.bank == BANK_PIANO) return "n/a";
+      if (v == OVERRIDE_OFF) return "PATCH";
+      char b[16];
+      if (g_set.bank == BANK_DX7) { snprintf(b, sizeof(b), "x%.2f", envov::dxMul(v)); return b; }
+      if (k == 2) return String(v * 100 / 127) + "%";
+      float ms = k == 0 ? envov::attackMs(v) : envov::decayMs(v);
+      if (ms < 1000.f) snprintf(b, sizeof(b), "%d ms", (int)ms);
+      else snprintf(b, sizeof(b), "%.1f s", ms / 1000.f);
+      return b;
+    }
     case P_REVERB: return g_set.reverb ? String(g_set.reverb) : String("OFF");
     case P_MIDICH: return g_set.midiCh ? String(g_set.midiCh) : String("OMNI");
     case P_VOLUME: return String(g_set.volume * 100 / 255) + "%";
@@ -373,6 +439,20 @@ static void changeParam(int id, int d) {
       v = clampi(v + d, -1, 127);
       g_set.res = v < 0 ? OVERRIDE_OFF : v;
       if (v < 0) sendCmd(CMD_LOAD_PATCH); else sendCmd(CMD_FILTER);
+      break;
+    }
+    case P_ATTACK: case P_DECAY: case P_SUSTAIN: case P_RELEASE: {
+      if (g_set.bank == BANK_PIANO) return;
+      int k = id - P_ATTACK;
+      uint8_t& e = g_set.env[g_set.bank][k];
+      if (e == OVERRIDE_OFF) {  // leaving PATCH: start from a sensible value
+        static const uint8_t kAbsDefault[4] = {20, 70, 90, 55};
+        e = g_set.bank == BANK_DX7 ? 64 : kAbsDefault[k];
+      } else {
+        int v = e + d;
+        e = v < 0 ? OVERRIDE_OFF : (uint8_t)clampi(v, 0, 127);  // below 0 = back to PATCH
+      }
+      sendCmd(CMD_ENV);
       break;
     }
     case P_REVERB: g_set.reverb = clampi(g_set.reverb + d, 0, 127); sendCmd(CMD_REVERB); break;

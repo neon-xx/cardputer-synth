@@ -3,5 +3,5 @@
 #pragma once
 #include <stdint.h>
 
-enum CmdType : uint8_t { CMD_NOTE_ON, CMD_NOTE_OFF, CMD_LOAD_PATCH, CMD_FILTER, CMD_REVERB, CMD_PANIC, CMD_LEVEL };
+enum CmdType : uint8_t { CMD_NOTE_ON, CMD_NOTE_OFF, CMD_LOAD_PATCH, CMD_FILTER, CMD_REVERB, CMD_PANIC, CMD_LEVEL, CMD_ENV };
 struct Cmd { uint8_t type, a, b; };
