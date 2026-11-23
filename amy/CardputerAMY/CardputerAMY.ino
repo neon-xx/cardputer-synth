@@ -43,7 +43,8 @@ struct Settings {
   uint8_t midiCh = 0;             // 0 = omni
   uint8_t volume = 170;
   uint8_t rotation = 0xFF;        // 0xFF = auto landscape
-  uint8_t version = 1;
+  uint8_t level[3] = {100, 100, 100};  // per-bank level trim, percent
+  uint8_t version = 2;
 };
 static Settings g_set;
 static Preferences g_prefs;
@@ -96,18 +97,22 @@ static void amyApplyFilter() {
   if (any) amy_add_event(&e);
 }
 
+// AMY's banks come out at very different raw levels, so each bank gets a base
+// gain on the output bus, times the user's per-bank Level trim.
+static void amyApplyLevel() {
+  static const float kBankGain[3] = {2.0f, 3.5f, 0.2f};
+  amy_event v = amy_default_event();
+  v.volume = kBankGain[g_set.bank] * g_set.level[g_set.bank] / 100.f;
+  amy_add_event(&v);
+}
+
 static void amyLoadPatch() {
   amy_event e = amy_default_event();
   e.synth = 1;
   e.patch_number = amyPatchNumber();
   e.num_voices = g_set.voices[g_set.bank];
   amy_add_event(&e);
-  // AMY's banks come out at very different levels (the piano is ~20x louder
-  // than the Juno patches), so level-match them on the output bus.
-  static const float kBankGain[3] = {2.0f, 3.5f, 0.06f};
-  amy_event v = amy_default_event();
-  v.volume = kBankGain[g_set.bank];
-  amy_add_event(&v);
+  amyApplyLevel();
   g_filterTypeSet = false;
   amyApplyFilter();  // re-apply the user's filter override, if any
 }
@@ -172,6 +177,7 @@ static void handleCmd(const Cmd& c) {
     case CMD_FILTER:     amyApplyFilter(); break;
     case CMD_REVERB:     amyApplyReverb(); break;
     case CMD_PANIC:      panic(); break;
+    case CMD_LEVEL:      amyApplyLevel(); break;
   }
 }
 
@@ -242,7 +248,7 @@ static void saveSoon() { g_saveAt = millis() + 2000; }
 static void loadSettings() {
   g_prefs.begin("camy", true);
   Settings s;
-  if (g_prefs.getBytesLength("set") == sizeof(Settings) && g_prefs.getBytes("set", &s, sizeof(s)) && s.version == 1)
+  if (g_prefs.getBytesLength("set") == sizeof(Settings) && g_prefs.getBytes("set", &s, sizeof(s)) && s.version == 2)
     g_set = s;
   g_prefs.end();
   if (g_set.bank > BANK_PIANO) g_set.bank = BANK_JUNO;
@@ -264,8 +270,8 @@ static String g_toast;
 static uint32_t g_toastUntil = 0;
 static void toast(const String& s, uint32_t ms = 1500) { g_toast = s; g_toastUntil = millis() + ms; g_dirty = true; }
 
-enum ParamId { P_BANK, P_PATCH, P_VOICES, P_CUTOFF, P_RES, P_REVERB, P_MIDICH, P_VOLUME, P_COUNT };
-static const char* const kParamNames[P_COUNT] = {"Bank", "Patch", "Voices", "Filter Cutoff", "Filter Res",
+enum ParamId { P_BANK, P_PATCH, P_LEVEL, P_VOICES, P_CUTOFF, P_RES, P_REVERB, P_MIDICH, P_VOLUME, P_COUNT };
+static const char* const kParamNames[P_COUNT] = {"Bank", "Patch", "Bank Level", "Voices", "Filter Cutoff", "Filter Res",
                                                  "Reverb", "MIDI Channel", "Volume"};
 static const char* const kBankNames[3] = {"JUNO-6", "DX7", "PIANO"};
 
@@ -281,6 +287,7 @@ static String paramValue(int id) {
   switch (id) {
     case P_BANK:   return kBankNames[g_set.bank];
     case P_PATCH:  return g_set.bank == BANK_PIANO ? String("-") : String(g_set.patch[g_set.bank] + 1);
+    case P_LEVEL:  return String(g_set.level[g_set.bank]) + "%";
     case P_VOICES: return String(g_set.voices[g_set.bank]);
     case P_CUTOFF: return g_set.cutoff == OVERRIDE_OFF ? String("PATCH") : String(g_set.cutoff);
     case P_RES:    return g_set.res == OVERRIDE_OFF ? String("PATCH") : String(g_set.res);
@@ -300,6 +307,8 @@ static void changeParam(int id, int d) {
       return;
     }
     case P_PATCH:  if (g_set.bank < 2) selectPatch(g_set.bank, g_set.patch[g_set.bank] + d); return;
+    case P_LEVEL:  g_set.level[g_set.bank] = clampi(g_set.level[g_set.bank] + d * 5, 0, 250);
+                   sendCmd(CMD_LEVEL); break;
     case P_VOICES: g_set.voices[g_set.bank] = clampi(g_set.voices[g_set.bank] + (d > 0 ? 1 : -1), 1, 10);
                    sendCmd(CMD_LOAD_PATCH); break;
     case P_CUTOFF: {  // PATCH sits above 127; stepping down from it starts at 127

@@ -149,7 +149,7 @@ Hardware setup is the same: Unit MIDI on the Grove port, set to **BYPASS**.
 | `` ` `` | Rotate the screen |
 | `Backspace` | All notes off |
 
-Settings: Bank, Patch, Voices (1–10, per bank), Filter Cutoff and Filter Res
+Settings: Bank, Patch, Bank Level (per-bank loudness trim, 0–250%), Voices (1–10, per bank), Filter Cutoff and Filter Res
 (**PATCH** means the patch's own setting; on DX7/piano moving the cutoff adds a
 24 dB low-pass), Reverb, MIDI Channel and Volume. All of them are saved to flash.
 
