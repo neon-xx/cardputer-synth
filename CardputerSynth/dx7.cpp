@@ -390,7 +390,9 @@ void Dx7Engine::allSoundOff() {
 
 void Dx7Engine::controlChange(uint8_t cc, uint8_t val) {
   switch (cc) {
-    case 74: macroBright = (uint8_t)(val * 100 / 127); break;
+    case 74: filterCut = val; break;
+    case 71: filterRes = val; break;
+    case 70: macroBright = (uint8_t)(val * 100 / 127); break;
     case 73: macroAttack = (uint8_t)(val * 100 / 127); break;
     case 72: macroRelease = (uint8_t)(val * 100 / 127); break;
     case 76: patch.lfs = (uint8_t)(val * 99 / 127); break;
@@ -504,6 +506,40 @@ void DSP_HOT Dx7Engine::render(float* out, int n) {
     for (auto& v : v_) if (v.active) renderVoice(v, out + off, m, pitchSemis, ampUni);
   }
   for (int i = 0; i < n; i++) out[i] *= 0.14f;
+
+  // Output low-pass: same TPT ladder + soft-saturating feedback as the Juno VCF.
+  // Bypassed (and its state cleared) when fully open with no resonance.
+  if (filterCut >= 127 && filterRes == 0) {
+    f1_ = f2_ = f3_ = f4_ = 0.f;
+    fltOct_ = 10.f;
+    return;
+  }
+  const float k = 4.1f * (filterRes / 127.f);
+  const float comp = 1.f + 0.3f * k;
+  const float targetOct = filterCut / 127.f * 10.f;
+  for (int off = 0; off < n; off += SUB) {
+    int m = (n - off) < SUB ? (n - off) : SUB;
+    fltOct_ += (targetOct - fltOct_) * 0.15f;  // de-zipper knob/CC moves
+    float fc = clampf(20.f * fastExp2(fltOct_), 10.f, 0.42f * SRF);
+    float g = tanf(3.14159265f * fc / SRF);
+    float G = g / (1.f + g), G2 = G * G, G3 = G2 * G, G4 = G3 * G;
+    float inv1g = 1.f / (1.f + g), uNorm = 1.f / (1.f + k * G4);
+    float s1 = f1_, s2 = f2_, s3 = f3_, s4 = f4_;
+    float* o = out + off;
+    for (int i = 0; i < m; i++) {
+      float S = (G3 * s1 + G2 * s2 + G * s3 + s4) * inv1g;
+      float u = (o[i] - k * S) * uNorm;
+      u = u > 1.5f ? 1.5f : (u < -1.5f ? -1.5f : u);
+      u = u - 0.148148f * u * u * u;
+      float vv, y;
+      vv = (u - s1) * G;  y = vv + s1;  s1 = y + vv;
+      vv = (y - s2) * G;  y = vv + s2;  s2 = y + vv;
+      vv = (y - s3) * G;  y = vv + s3;  s3 = y + vv;
+      vv = (y - s4) * G;  y = vv + s4;  s4 = y + vv;
+      o[i] = y * comp;
+    }
+    f1_ = s1; f2_ = s2; f3_ = s3; f4_ = s4;
+  }
 }
 
 }  // namespace syn

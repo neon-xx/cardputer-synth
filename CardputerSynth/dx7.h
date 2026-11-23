@@ -64,6 +64,9 @@ class Dx7Engine : public Engine {
   uint8_t macroBright = 50;   // modulator output level offset
   uint8_t macroAttack = 50;   // EG rate 1 offset
   uint8_t macroRelease = 50;  // EG rate 4 offset
+  // Juno-style 24 dB resonant low-pass on the DX output (127/0 = bypassed)
+  uint8_t filterCut = 127;
+  uint8_t filterRes = 0;
   uint8_t opEnable = 0x3F;    // bit n = OP(n+1) on
 
  private:
@@ -100,6 +103,9 @@ class Dx7Engine : public Engine {
   // global LFO
   float    lfoPh_ = 0.f, lfoSH_ = 0.f, lfoDelayT_ = 0.f;
   Rng      rng_;
+  // output filter state
+  float    fltOct_ = 10.f;           // smoothed cutoff, octaves above 20 Hz
+  float    f1_ = 0, f2_ = 0, f3_ = 0, f4_ = 0;
 
   void startVoice(Voice& v, uint8_t note, uint8_t vel, bool retrig);
   void renderVoice(Voice& v, float* acc, int n, float lfoPitchSemis, float lfoAmpUni);

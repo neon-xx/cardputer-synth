@@ -458,6 +458,8 @@ static void buildPage() {
       addP("Feedback", &p.fb, 0, 7);
       addP("Osc Key Sync", &p.oks, 0, 1, 0, L_ONOFF);
       addP("Transpose", &p.trnsp, 0, 48, -24);
+      addP("* Filter Cutoff", &dx7.filterCut, 0, 127);
+      addP("* Filter Res", &dx7.filterRes, 0, 127);
       addP("* Brightness", &dx7.macroBright, 0, 100, -50);
       addP("* Attack", &dx7.macroAttack, 0, 100, -50);
       addP("* Release", &dx7.macroRelease, 0, 100, -50);

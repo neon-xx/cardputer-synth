@@ -73,8 +73,10 @@ an authentic, velocity-free 106.
 4-rate/4-level EGs, the DX7 output-level, velocity, key-level and rate-scaling
 model, ratio/fixed frequencies with detune, pitch EG, LFO (6 waves, delay, PMD,
 AMD, sensitivities) and osc key sync. Every DX7 voice parameter is editable on
-the VOICE and OPERATOR 1–6 pages. The **Brightness / Attack / Release** macros
-on the VOICE page offset modulator levels and EG rates without changing the patch.
+the VOICE and OPERATOR 1–6 pages. The VOICE page also has a Juno-style
+**resonant 24 dB low-pass filter** on the DX output (Filter Cutoff / Filter Res,
+CC 74 / 71; fully open = bypassed), and **Brightness / Attack / Release** macros
+that offset modulator levels and EG rates. None of these change the stored patch.
 
 The internal bank has 8 original voices. For the classic sounds, load real DX7
 cartridges:
@@ -95,7 +97,8 @@ are saved to flash.
 | Note on/off, sustain (CC64), pitch bend | ✓ | ✓ |
 | CC1 mod wheel | adds LFO vibrato | adds LFO vibrato |
 | CC7 | master volume | master volume |
-| CC71 / 74 | resonance / cutoff | – / brightness macro |
+| CC71 / 74 | resonance / cutoff | output filter resonance / cutoff |
+| CC70 | – | brightness macro |
 | CC73 / 75 / 79 / 72 | attack / decay / sustain / release | attack macro (73) / release macro (72) |
 | CC76 / 77 / 78 | LFO rate / LFO→DCO / LFO delay | LFO speed (76) |
 | CC80–85 | env amt, PWM, VCF LFO, sub, noise, key follow | – |
