@@ -15,6 +15,7 @@
 #include <AMY-Arduino.h>
 #include "midi_parser.h"
 #include "amy_patch_names.h"
+#include "amy_cmd.h"
 
 extern "C" {
 void amy_event_midi_message_received(uint8_t* data, uint32_t len, uint8_t sysex);
@@ -56,8 +57,6 @@ static int amyPatchNumber() {
 // ---------------------------------------------------------------------------
 // Commands from the UI to the audio task (which owns AMY)
 // ---------------------------------------------------------------------------
-enum CmdType : uint8_t { CMD_NOTE_ON, CMD_NOTE_OFF, CMD_LOAD_PATCH, CMD_FILTER, CMD_REVERB, CMD_PANIC };
-struct Cmd { uint8_t type, a, b; };
 static QueueHandle_t g_cmdq;
 
 static volatile uint32_t g_midiActivityMs = 0;
