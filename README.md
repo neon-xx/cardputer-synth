@@ -126,6 +126,44 @@ are saved to flash.
 - The output is mono, because the ES8311 is a mono codec. The Juno chorus is
   mixed to mono the way summing a real Juno's L/R outputs would be.
 
+## CardputerAMY: the AMY-engine version
+
+`amy/` is a second firmware built on [AMY](https://github.com/shorepine/amy),
+the synth engine behind AMYboard and Tulip. Instead of my engines it uses AMY's
+own models and patch banks:
+
+- **128 Juno-6 patches** (A11–B88), **128 DX7 patches** and AMY's modelled **piano**
+- AMY handles voice allocation, the Juno chorus, envelopes, velocity, sustain, bend and mod wheel
+- It renders on both CPU cores. The sketch hands AMY's 44.1 kHz blocks to the
+  ES8311 through M5Unified, the same audio path as CardputerSynth.
+
+Hardware setup is the same: Unit MIDI on the Grove port, set to **BYPASS**.
+
+| Key | Action |
+|---|---|
+| `Tab` | Next bank: Juno-6 → DX7 → Piano (each bank remembers its patch) |
+| `[` `]` | Previous / next patch; `{` `}` jump 8 |
+| `;` `.` / `Enter` | Move through the settings |
+| `,` `/` | Change the selected setting (Shift = ×10) |
+| letters/numbers | Piano keys (same layout as above); `-` `=` octave |
+| `` ` `` | Rotate the screen |
+| `Backspace` | All notes off |
+
+Settings: Bank, Patch, Voices (1–10, per bank), Filter Cutoff and Filter Res
+(**PATCH** means the patch's own setting; on DX7/piano moving the cutoff adds a
+24 dB low-pass), Reverb, MIDI Channel and Volume. All of them are saved to flash.
+
+MIDI: notes, sustain, bend and mod wheel go to AMY. CC 74 / 71 set filter cutoff /
+resonance, CC 91 sets reverb, CC 7 sets volume, and program change selects a patch
+in the current bank.
+
+Build: `pio run -d amy` (CI publishes `CardputerAMY-app.bin` / `-full.bin`).
+For the Arduino IDE, open `amy/CardputerAMY/CardputerAMY.ino`. Install the AMY
+library from GitHub at commit `9cdf615`; the patch-name table matches that version.
+
+The Cardputer has no PSRAM, so AMY runs with small pools: 100 oscillators,
+echo and partials off, and reverb and chorus on. Free memory is shown at startup.
+
 ## Files
 
 ```
@@ -136,4 +174,5 @@ CardputerSynth/dx7_presets.cpp     internal FM voices
 CardputerSynth/midi_parser.h       MIDI byte parser (running status, SysEx)
 CardputerSynth/synth_common.*      shared DSP helpers, engine base class
 tools/                             host-side tests (g++), not part of the firmware
+amy/                               CardputerAMY (AMY engine version) + its platformio.ini
 ```
