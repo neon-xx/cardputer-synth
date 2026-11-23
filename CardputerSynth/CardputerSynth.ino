@@ -16,6 +16,7 @@
 #include "juno.h"
 #include "dx7.h"
 #include "midi_parser.h"
+#include "ui_param.h"
 
 using namespace syn;
 
@@ -356,16 +357,6 @@ static void saveDx7() {
 // ---------------------------------------------------------------------------
 // Parameter pages
 // ---------------------------------------------------------------------------
-enum PFlag : uint8_t { PF_NONE = 0, PF_BIT = 1, PF_SETTING = 2 };
-struct Param {
-  const char*        name;
-  uint8_t*           ptr;
-  int16_t            mn, mx;
-  int16_t            dispOffset;   // shown value = raw + dispOffset
-  const char* const* labels;
-  uint8_t            flags;
-  uint8_t            bit;
-};
 
 static const char* const L_RANGE[] = {"16'", "8'", "4'"};
 static const char* const L_PWM[]   = {"LFO", "MANUAL", "ENV"};
