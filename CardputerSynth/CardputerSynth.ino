@@ -39,6 +39,7 @@ struct Settings {
   uint8_t bendRange = 2;   // semitones
   uint8_t volume = 170;    // codec volume 0..255
   uint8_t engine = 0;      // 0 juno, 1 dx7
+  uint8_t rotation = 0xFF; // display rotation 0-3, 0xFF = auto (landscape)
 };
 static Settings g_set;
 
@@ -147,6 +148,9 @@ static void audioTask(void*) {
   static float   mix[BLOCK];
   int   bi = 0;
   float dcX = 0.f, dcY = 0.f;
+  float limEnv = 0.f;                              // peak limiter envelope
+  const float limRel = expf(-1.f / (0.25f * SAMPLE_RATE));  // 250 ms release
+  const float limThresh = 0.8f;
   const float blockUs = 1e6f * BLOCK / SAMPLE_RATE;
   for (;;) {
     pollInputs();
@@ -157,14 +161,21 @@ static void audioTask(void*) {
     uint32_t t0 = micros();
     g_engine->render(mix, BLOCK);
     for (int i = 0; i < BLOCK; i++) {
-      // DC blocker + soft clip
+      // DC blocker -> peak limiter -> soft clip. The limiter keeps piled-up long
+      // releases from slamming into the clipper (which sounds like crackling).
       float x = mix[i];
       dcY = x - dcX + 0.9987f * dcY;
       dcX = x;
-      pcm[bi][i] = (int16_t)(softClip(dcY) * 30000.f);
+      float a = fabsf(dcY);
+      limEnv = a > limEnv ? a : limEnv * limRel;
+      float y = limEnv > limThresh ? dcY * (limThresh / limEnv) : dcY;
+      pcm[bi][i] = (int16_t)(softClip(y) * 30000.f);
     }
     uint32_t dt = micros() - t0;
     g_cpu = g_cpu * 0.95f + 0.05f * (dt / blockUs);
+    // Falling behind (e.g. many long releases ringing at once): fade out the
+    // quietest released voice instead of letting the audio buffer run dry.
+    if (dt > 0.8f * blockUs || g_cpu > 0.75f) g_engine->shedVoice();
     M5.Speaker.playRaw(pcm[bi], BLOCK, SAMPLE_RATE, false, 1, 0, false);
     bi = (bi + 1) % 3;
   }
@@ -520,6 +531,30 @@ static M5Canvas g_canvas(&M5Cardputer.Display);
 static int  g_octave = 0;
 static bool g_dirty = true;
 
+// Landscape is rotation 1 or 3. In auto mode pick whichever the panel reports
+// as wider than tall; the ` key cycles through all four and remembers the choice.
+static void applyRotation() {
+  auto& d = M5Cardputer.Display;
+  if (g_set.rotation <= 3) {
+    d.setRotation(g_set.rotation);
+  } else {
+    d.setRotation(1);
+    if (d.width() < d.height()) d.setRotation(0);
+    if (d.width() < d.height()) d.setRotation(3);
+  }
+  d.fillScreen(TFT_BLACK);
+}
+
+static void cycleRotation() {
+  static const uint8_t order[4] = {1, 3, 0, 2};
+  uint8_t cur = M5Cardputer.Display.getRotation() & 3;
+  int i = 0;
+  while (order[i] != cur) i++;
+  g_set.rotation = order[(i + 1) % 4];
+  applyRotation();
+  saveSettingsSoon();
+}
+
 static uint16_t engineColor() { return g_set.engine == 0 ? 0xFC60 /*orange*/ : 0x2D7F /*blue*/; }
 
 static void draw() {
@@ -656,6 +691,7 @@ static void uiKey(char k) {
     case '-': g_octave = max(-3, g_octave - 1); break;
     case '=': g_octave = min(3, g_octave + 1); break;
     case '\\': if (g_set.engine == 0) saveJuno(); else saveDx7(); buildPage(); break;
+    case '`': cycleRotation(); toast("Rotation " + String(g_set.rotation)); break;
     default: break;
   }
   g_dirty = true;
@@ -709,11 +745,9 @@ void setup() {
   auto cfg = M5.config();
   cfg.internal_mic = false;  // ES8311 is used for playback only
   M5Cardputer.begin(cfg, true);
-  M5Cardputer.Display.setRotation(1);
-  M5Cardputer.Display.fillScreen(TFT_BLACK);
-
   initTables();
   loadSettings();
+  applyRotation();
   memset(g_pianoNote, -1, sizeof(g_pianoNote));
 
   // Speaker / codec at the synth's sample rate with short DMA buffers for low latency

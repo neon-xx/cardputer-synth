@@ -71,8 +71,20 @@ void JunoEngine::voiceOn(uint8_t note, uint8_t vel) {
   v.vel = vel / 127.f;
   v.gate = true;
   v.stage = 1;
+  v.fastRel = false;
   v.active = true;
   v.age = ++ageCounter_;
+}
+
+bool JunoEngine::shedVoice() {
+  int idx = -1;
+  float best = 1e9f;
+  for (int i = 0; i < NV; i++)
+    if (v_[i].active && !v_[i].gate && !v_[i].fastRel && v_[i].env < best) { best = v_[i].env; idx = i; }
+  if (idx < 0) return false;
+  v_[idx].fastRel = true;
+  v_[idx].stage = 3;
+  return true;
 }
 
 void JunoEngine::voiceOff(uint8_t note) {
@@ -121,8 +133,7 @@ void JunoEngine::renderVoice(Voice& v, float* acc, int n, float lfo) {
   else if (p.pwmMode == 2) pwAmt *= v.env;
   float pw = 0.5f - 0.46f * pwAmt;
 
-  const float sawG   = p.saw ? 1.f : 0.f;
-  const float pulseG = p.pulse ? 1.f : 0.f;
+  const bool useSaw = p.saw, usePulse = p.pulse, useSub = p.sub > 0, useNoise = p.noise > 0;
   const float subG   = p.sub / 127.f;
   const float noiseG = p.noise / 127.f * 0.8f;
 
@@ -150,6 +161,8 @@ void JunoEngine::renderVoice(Voice& v, float* acc, int n, float lfo) {
   float s1 = v.s1, s2 = v.s2, s3 = v.s3, s4 = v.s4;
   int stage = v.stage;
   float gEnv = v.gEnv;
+  const float relC = v.fastRel ? 0.02f : s_relC;  // 0.02/sample = ~5 ms fade
+  const float gateC = v.fastRel ? 0.02f : 0.01f;
 
   for (int i = 0; i < n; i++) {
     // envelope
@@ -159,24 +172,30 @@ void JunoEngine::renderVoice(Voice& v, float* acc, int n, float lfo) {
     } else if (stage == 2) {
       env += (s_sus - env) * s_decC;
     } else if (stage == 3) {
-      env -= env * s_relC;
+      env -= env * relC;
     }
-    gEnv += (gateTarget - gEnv) * 0.01f;
+    gEnv += (gateTarget - gEnv) * gateC;
     float amp = gateMode ? gEnv : env;
 
     // oscillators
-    float saw = 2.f * ph - 1.f - polyBlep(ph, dt);
-    float t2 = ph + 1.f - pw; if (t2 >= 1.f) t2 -= 1.f;
-    float pul = (ph < pw ? 1.f : -1.f) + polyBlep(ph, dt) - polyBlep(t2, dt);
-    float t3 = sph + 0.5f; if (t3 >= 1.f) t3 -= 1.f;
-    float sub = (sph < 0.5f ? 1.f : -1.f) + polyBlep(sph, dtSub) - polyBlep(t3, dtSub);
-    float x = saw * sawG + pul * pulseG + sub * subG + rng_.bipolar() * noiseG;
+    float x = 0.f;
+    float blep0 = polyBlep(ph, dt);
+    if (useSaw) x += 2.f * ph - 1.f - blep0;
+    if (usePulse) {
+      float t2 = ph + 1.f - pw; if (t2 >= 1.f) t2 -= 1.f;
+      x += (ph < pw ? 1.f : -1.f) + blep0 - polyBlep(t2, dt);
+    }
+    if (useSub) {
+      float t3 = sph + 0.5f; if (t3 >= 1.f) t3 -= 1.f;
+      x += ((sph < 0.5f ? 1.f : -1.f) + polyBlep(sph, dtSub) - polyBlep(t3, dtSub)) * subG;
+    }
+    if (useNoise) x += rng_.bipolar() * noiseG;
     ph += dt; if (ph >= 1.f) ph -= 1.f;
     sph += dtSub; if (sph >= 1.f) sph -= 1.f;
 
     // ladder (TPT, zero-delay feedback) with saturating input stage
     x *= 0.5f;
-    float S = G3 * s1 * inv1g + G2 * s2 * inv1g + G * s3 * inv1g + s4 * inv1g;
+    float S = (G3 * s1 + G2 * s2 + G * s3 + s4) * inv1g;
     float u = (x - k * S) * uNorm;
     u = u > 1.5f ? 1.5f : (u < -1.5f ? -1.5f : u);
     u = u - 0.148148f * u * u * u;  // cubic soft clip, no division
@@ -191,8 +210,8 @@ void JunoEngine::renderVoice(Voice& v, float* acc, int n, float lfo) {
 
   v.ph = ph; v.subPh = sph; v.env = env; v.stage = stage; v.gEnv = gEnv;
   v.s1 = s1; v.s2 = s2; v.s3 = s3; v.s4 = s4;
-  if (stage == 3 && env < 1e-4f && (!gateMode || gEnv < 1e-4f)) {
-    v.active = false; v.stage = 0; v.env = 0.f;
+  if (stage == 3 && env < 3e-4f && (!gateMode || gEnv < 3e-4f)) {
+    v.active = false; v.stage = 0; v.env = 0.f; v.fastRel = false;
   }
   if (!v.active) v.gEnv = 0.f;
 }

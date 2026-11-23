@@ -56,6 +56,7 @@ class Dx7Engine : public Engine {
   void allSoundOff() override;
   void controlChange(uint8_t cc, uint8_t val) override;
   int  activeVoices() const override;
+  bool shedVoice() override;
   void loadPatch(const Dx7Patch& p) { patch = p; dx7Sanitize(patch); }
 
   Dx7Patch patch;
@@ -85,7 +86,7 @@ class Dx7Engine : public Engine {
     uint8_t  ams = 0;
   };
   struct Voice {
-    bool     active = false, gate = false;
+    bool     active = false, gate = false, shed = false;
     uint8_t  note = 0;
     uint32_t age = 0;
     Op       op[6];

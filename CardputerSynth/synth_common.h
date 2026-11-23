@@ -71,6 +71,8 @@ class Engine {
   virtual void allSoundOff() = 0;
   virtual void controlChange(uint8_t cc, uint8_t val) { (void)cc; (void)val; }
   virtual int activeVoices() const = 0;
+  // Quickly fade out the quietest released voice (used when the CPU falls behind).
+  virtual bool shedVoice() { return false; }
 
   void noteOn(uint8_t note, uint8_t vel) {
     if (vel == 0) { noteOff(note); return; }

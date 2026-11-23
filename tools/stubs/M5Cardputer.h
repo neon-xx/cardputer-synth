@@ -42,7 +42,7 @@ extern HardwareSerial Serial1;
 // M5
 namespace fonts { struct F {}; extern F Font0, Font2; }
 enum { TFT_BLACK = 0, TFT_WHITE = 0xFFFF, TFT_GREEN = 0x07E0 };
-struct LGFX_Device { void setRotation(int); void fillScreen(int); };
+struct LGFX_Device { void setRotation(int); void fillScreen(int); int width(); int height(); uint8_t getRotation(); };
 struct M5Canvas {
   M5Canvas(LGFX_Device*) {}
   void setColorDepth(int); void createSprite(int, int); void fillScreen(int); void fillRect(int,int,int,int,int);

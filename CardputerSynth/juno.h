@@ -46,6 +46,7 @@ class JunoEngine : public Engine {
   void allSoundOff() override;
   void controlChange(uint8_t cc, uint8_t val) override;
   int  activeVoices() const override;
+  bool shedVoice() override;
   void loadPatch(const JunoPatch& p) { patch = p; }
 
   JunoPatch patch;
@@ -59,6 +60,7 @@ class JunoEngine : public Engine {
     float    ph = 0.f, subPh = 0.f;
     float    env = 0.f, gEnv = 0.f;
     int      stage = 0;  // 0 idle 1 attack 2 decay/sustain 3 release
+    bool     fastRel = false;  // being shed: ~5 ms fade
     float    s1 = 0, s2 = 0, s3 = 0, s4 = 0;  // ladder states
   };
   Voice    v_[NV];

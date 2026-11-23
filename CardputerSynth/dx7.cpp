@@ -302,7 +302,10 @@ void Dx7Engine::startVoice(Voice& v, uint8_t note, uint8_t vel, bool retrig) {
       if (r > 99) r = 99;
       eg.inc[s] = egIncFor(r, rs);
     }
-    if (!retrig || !v.active) { eg.level = 0.f; op.amp = 0.f; op.y1 = op.y2 = 0.f; }
+    // a voice that's still sounding (retrigger or steal) restarts its EGs from the
+    // current level, so there's no click
+    if (!v.active) { eg.level = 0.f; op.amp = 0.f; op.y1 = op.y2 = 0.f; }
+    (void)retrig;
     eg.stage = 0;
     eg.down = true;
     op.ams = o.ams;
@@ -313,7 +316,8 @@ void Dx7Engine::startVoice(Voice& v, uint8_t note, uint8_t vel, bool retrig) {
     v.pegTarget[s] = pegLevelToSemis(p.pl[s]);
     v.pegRate[s] = pegRateToSemisPerSample(p.pr[s]);
   }
-  if (!retrig || !v.active) v.peg = v.pegTarget[3];
+  if (!v.active) v.peg = v.pegTarget[3];
+  v.shed = false;
   v.pegStage = 0;
 }
 
@@ -347,6 +351,27 @@ void Dx7Engine::voiceOn(uint8_t note, uint8_t vel) {
   v.gate = true;
   v.active = true;
   v.age = ++ageCounter_;
+}
+
+bool Dx7Engine::shedVoice() {
+  int idx = -1;
+  float best = 1e9f;
+  for (int i = 0; i < NV; i++) {
+    Voice& v = v_[i];
+    if (!v.active || v.gate || v.shed) continue;
+    float lvl = 0;
+    for (int k = 0; k < 6; k++) lvl = fmaxf(lvl, v.op[k].eg.level);
+    if (lvl < best) { best = lvl; idx = i; }
+  }
+  if (idx < 0) return false;
+  Voice& v = v_[idx];
+  v.shed = true;
+  for (auto& op : v.op) {  // fastest DX7 release (~6 ms) down to silence
+    op.eg.inc[3] = egIncFor(99, 0) * 2.f;
+    op.eg.target[3] = 16.f;
+    op.eg.stage = 3;
+  }
+  return true;
 }
 
 void Dx7Engine::voiceOff(uint8_t note) {

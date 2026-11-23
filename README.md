@@ -55,6 +55,7 @@ z x c v b n m              <- C D E F G A B
 | `-` `=` | Octave down / up for the Cardputer keys |
 | `\` | Save (Juno → user slot U1–U8 in flash; DX7 → `/dx7/USER.syx`) |
 | `Backspace` | Panic (all notes off) |
+| `` ` `` (top-left key) | Rotate the screen (cycles through all four, remembered) |
 
 The header shows the patch, active voices, audio CPU load and a MIDI activity LED.
 
@@ -110,7 +111,10 @@ are saved to flash.
   SysEx parsing was verified with a round trip. It **hasn't been run on a real
   Cardputer-Adv yet**. CPU use, audio latency and the M5Unified speaker setup
   are the things to check first.
-- If the CPU readout is regularly above ~85% or you hear crackles, lower
+- Long releases: a peak limiter stops piled-up notes from distorting, stolen
+  voices fade instead of cutting off, and if the CPU falls behind the quietest
+  released voice is faded out (~5 ms) rather than letting the audio drop out.
+- If the CPU readout is still regularly above ~85% or you hear crackles, lower
   `Dx7Engine::NV` (dx7.h) or `JunoEngine::NV` (juno.h), or change `SAMPLE_RATE`
   in `synth_common.h` to 32000.
 - The DX7 engine follows the original's level, envelope and scaling maths but is
