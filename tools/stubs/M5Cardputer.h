@@ -27,6 +27,7 @@ struct String {
   friend String operator+(const String& a, const char* b) { return String(a.s + b); }
 };
 uint32_t millis(); uint32_t micros(); void delay(uint32_t);
+struct EspClass { uint32_t getFreeHeap(); }; extern EspClass ESP;
 // FreeRTOS
 typedef void* QueueHandle_t; typedef int BaseType_t;
 #define pdTRUE 1

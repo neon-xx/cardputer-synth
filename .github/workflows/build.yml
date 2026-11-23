@@ -21,13 +21,16 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.platformio
-          key: pio-${{ hashFiles('platformio.ini') }}
+          key: pio-${{ hashFiles('platformio.ini', 'amy/platformio.ini') }}
 
       - name: Install PlatformIO and esptool
         run: pip install platformio esptool
 
-      - name: Build
+      - name: Build (CardputerSynth)
         run: pio run -e cardputer-adv
+
+      - name: Build (CardputerAMY)
+        run: pio run -d amy -e cardputer-adv-amy
 
       - name: Inspect DSP hot path (diagnostics)
         run: |
@@ -52,6 +55,11 @@ jobs:
           esptool.py --chip esp32s3 merge_bin -o dist/CardputerSynth-full.bin \
             --flash_mode dio --flash_freq 80m --flash_size 8MB \
             0x0 $B/bootloader.bin 0x8000 $B/partitions.bin 0xe000 "$BOOT_APP0" 0x10000 $B/firmware.bin
+          A=amy/.pio/build/cardputer-adv-amy
+          cp $A/firmware.bin dist/CardputerAMY-app.bin
+          esptool.py --chip esp32s3 merge_bin -o dist/CardputerAMY-full.bin \
+            --flash_mode dio --flash_freq 80m --flash_size 8MB \
+            0x0 $A/bootloader.bin 0x8000 $A/partitions.bin 0xe000 "$BOOT_APP0" 0x10000 $A/firmware.bin
           ls -l dist
 
       - uses: actions/upload-artifact@v4
@@ -68,6 +76,7 @@ jobs:
           make_latest: true
           body: |
             Built automatically from ${{ github.sha }}.
-            - **CardputerSynth-app.bin**: copy to the SD card and launch with M5Launcher / Bruce.
-            - **CardputerSynth-full.bin**: flash at address 0x0 with a web flasher, esptool or M5Burner.
+            **CardputerSynth** (custom Juno + DX7 engines) and **CardputerAMY** (AMY engine: 128 Juno-6, 128 DX7, piano)
+            - **…-app.bin**: copy to the SD card and launch with M5Launcher / Bruce.
+            - **…-full.bin**: flash at address 0x0 with a web flasher, esptool or M5Burner.
           files: dist/*.bin
