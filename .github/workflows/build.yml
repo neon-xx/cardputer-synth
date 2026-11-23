@@ -38,7 +38,7 @@ jobs:
             $OBJDUMP -d -C $ELF | awk -v f="$fn" '$0 ~ "<syn::"f && /:$/ {p=1} p && /^$/ {exit} p' > fn.txt
             head -n1 fn.txt
             echo "instructions: $(grep -c '^ *[0-9a-f]*:' fn.txt)"
-            echo "calls:"; grep -oE 'call[0-9x]* +[0-9a-f]+ <[^>]+>' fn.txt | sed 's/.*</</' | sort | uniq -c
+            echo "calls:"; grep -E 'call' fn.txt | grep -oE '<[^>]+>' | sort | uniq -c
           done
 
       - name: Package binaries

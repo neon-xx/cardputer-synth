@@ -19,9 +19,10 @@ const JunoPatch kJunoPresets[JUNO_PRESETS] = {
   {"Sweep Pad", 25,  0, 1,  0, 90, 0, 1, 1,  30, 8, 1, 22, 75, 0, 85, 25, 40, 0,  85, 100, 110,  40, 95, 2, 10},
 };
 
-static inline float polyBlep(float t, float dt) {
-  if (t < dt) { float x = t / dt; return x + x - x * x - 1.f; }
-  if (t > 1.f - dt) { float x = (t - 1.f) / dt; return x * x + x + x + 1.f; }
+// invDt = 1/dt, precomputed per sub-block (float division is slow on the ESP32)
+static inline float polyBlep(float t, float dt, float invDt) {
+  if (t < dt) { float x = t * invDt; return x + x - x * x - 1.f; }
+  if (t > 1.f - dt) { float x = (t - 1.f) * invDt; return x * x + x + x + 1.f; }
   return 0.f;
 }
 
@@ -127,6 +128,7 @@ void DSP_HOT JunoEngine::renderVoice(Voice& v, float* acc, int n, float lfo) {
   float pitch = v.note + (int)(p.dcoRange - 1) * 12 + bend_ + lfo * dcoDepth;
   float dt = clampf(midiToHz(pitch) / SRF, 1e-6f, 0.45f);
   float dtSub = dt * 0.5f;
+  const float invDt = 1.f / dt, invDtSub = 1.f / dtSub;
 
   float pwAmt = p.pwm / 127.f;
   if (p.pwmMode == 0) pwAmt *= 0.5f + 0.5f * lfo;
@@ -179,15 +181,15 @@ void DSP_HOT JunoEngine::renderVoice(Voice& v, float* acc, int n, float lfo) {
 
     // oscillators
     float x = 0.f;
-    float blep0 = polyBlep(ph, dt);
+    float blep0 = polyBlep(ph, dt, invDt);
     if (useSaw) x += 2.f * ph - 1.f - blep0;
     if (usePulse) {
       float t2 = ph + 1.f - pw; if (t2 >= 1.f) t2 -= 1.f;
-      x += (ph < pw ? 1.f : -1.f) + blep0 - polyBlep(t2, dt);
+      x += (ph < pw ? 1.f : -1.f) + blep0 - polyBlep(t2, dt, invDt);
     }
     if (useSub) {
       float t3 = sph + 0.5f; if (t3 >= 1.f) t3 -= 1.f;
-      x += ((sph < 0.5f ? 1.f : -1.f) + polyBlep(sph, dtSub) - polyBlep(t3, dtSub)) * subG;
+      x += ((sph < 0.5f ? 1.f : -1.f) + polyBlep(sph, dtSub, invDtSub) - polyBlep(t3, dtSub, invDtSub)) * subG;
     }
     if (useNoise) x += rng_.bipolar() * noiseG;
     ph += dt; if (ph >= 1.f) ph -= 1.f;
