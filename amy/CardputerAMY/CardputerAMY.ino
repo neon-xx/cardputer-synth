@@ -17,6 +17,7 @@
 #include "amy_patch_names.h"
 #include "amy_cmd.h"
 #include "small_reverb.h"
+#include "custom_patches.h"
 
 extern "C" {
 void amy_event_midi_message_received(uint8_t* data, uint32_t len, uint8_t sysex);
@@ -31,30 +32,51 @@ static constexpr int MIDI_TX_PIN = 2;  // Grove yellow = Unit MIDI RX (unused)
 // ---------------------------------------------------------------------------
 // Settings (saved to flash)
 // ---------------------------------------------------------------------------
-enum Bank : uint8_t { BANK_JUNO = 0, BANK_DX7 = 1, BANK_PIANO = 2 };
+enum Bank : uint8_t { BANK_JUNO = 0, BANK_DX7, BANK_PIANO, BANK_PLUCK, BANK_WAVE, BANK_ANALOG, NUM_BANKS };
+static constexpr int USER_PATCH = 1024;  // custom-bank patches are stored here when selected
 static constexpr uint8_t OVERRIDE_OFF = 128;  // cutoff/res value meaning "use the patch's"
 
 struct Settings {
   uint8_t bank = BANK_JUNO;
-  uint8_t patch[2] = {0, 0};      // patch within the Juno / DX7 bank (0-127)
-  uint8_t voices[3] = {6, 8, 4};  // polyphony per bank
+  uint8_t patch[NUM_BANKS] = {};                      // patch index within each bank
+  uint8_t voices[NUM_BANKS] = {6, 8, 4, 6, 6, 6};     // polyphony per bank
   uint8_t cutoff = OVERRIDE_OFF;
   uint8_t res = OVERRIDE_OFF;
   uint8_t reverb = 0;             // 0-127
   uint8_t midiCh = 0;             // 0 = omni
   uint8_t volume = 170;
   uint8_t rotation = 0xFF;        // 0xFF = auto landscape
-  uint8_t level[3] = {100, 100, 100};  // per-bank level trim, percent
-  uint8_t version = 2;
+  uint8_t level[NUM_BANKS] = {100, 100, 100, 100, 100, 100};  // per-bank level trim, percent
+  uint8_t version = 3;
 };
 static Settings g_set;
 static Preferences g_prefs;
 
-static int amyPatchNumber() {
-  if (g_set.bank == BANK_JUNO) return g_set.patch[0];
-  if (g_set.bank == BANK_DX7) return 128 + g_set.patch[1];
-  return 256;
+template <size_t N> static constexpr int countOf(const CustomPatch (&)[N]) { return (int)N; }
+static const CustomPatch* customBank(int b) {
+  return b == BANK_PLUCK ? kPluckPatches : b == BANK_WAVE ? kWavePatches : b == BANK_ANALOG ? kAnalogPatches : nullptr;
 }
+static int bankSize(int b) {
+  switch (b) {
+    case BANK_JUNO: case BANK_DX7: return 128;
+    case BANK_PIANO: return 1;
+    case BANK_PLUCK: return countOf(kPluckPatches);
+    case BANK_WAVE: return countOf(kWavePatches);
+    default: return countOf(kAnalogPatches);
+  }
+}
+static bool isCustomBank(int b) { return customBank(b) != nullptr; }
+static int amyPatchNumber() {
+  if (g_set.bank == BANK_JUNO) return g_set.patch[BANK_JUNO];
+  if (g_set.bank == BANK_DX7) return 128 + g_set.patch[BANK_DX7];
+  if (g_set.bank == BANK_PIANO) return 256;
+  return USER_PATCH;
+}
+static const char* patchName() {
+  if (isCustomBank(g_set.bank)) return customBank(g_set.bank)[g_set.patch[g_set.bank]].name;
+  return kAmyPatchNames[amyPatchNumber()];
+}
+static int maxVoices(int b) { return b == BANK_PIANO ? 6 : (b == BANK_PLUCK ? 8 : 10); }
 
 // ---------------------------------------------------------------------------
 // Commands from the UI to the audio task (which owns AMY)
@@ -101,13 +123,32 @@ static void amyApplyFilter() {
 // AMY's banks come out at very different raw levels, so each bank gets a base
 // gain on the output bus, times the user's per-bank Level trim.
 static void amyApplyLevel() {
-  static const float kBankGain[3] = {2.0f, 3.5f, 1.1f};
+  static const float kBankGain[NUM_BANKS] = {2.0f, 3.5f, 1.1f, 1.0f, 1.0f, 1.0f};
+  float g = kBankGain[g_set.bank];
+  if (isCustomBank(g_set.bank)) g *= customBank(g_set.bank)[g_set.patch[g_set.bank]].gain;
   amy_event v = amy_default_event();
-  v.volume = kBankGain[g_set.bank] * g_set.level[g_set.bank] / 100.f;
+  v.volume = g * g_set.level[g_set.bank] / 100.f;
   amy_add_event(&v);
 }
 
+// Store a custom-bank patch's osc commands as user patch USER_PATCH.
+static void amyDefineCustomPatch() {
+  const CustomPatch& cp = customBank(g_set.bank)[g_set.patch[g_set.bank]];
+  char msg[256];
+  snprintf(msg, sizeof(msg), "K%dS%dZ", USER_PATCH, RESET_PATCH);
+  amy_add_message(msg);
+  const char* c = cp.cmds;
+  while (*c) {
+    const char* end = strchr(c, '|');
+    int len = end ? (int)(end - c) : (int)strlen(c);
+    snprintf(msg, sizeof(msg), "K%d%.*sZ", USER_PATCH, len, c);
+    amy_add_message(msg);
+    c += len + (end ? 1 : 0);
+  }
+}
+
 static void amyLoadPatch() {
+  if (isCustomBank(g_set.bank)) amyDefineCustomPatch();
   amy_event e = amy_default_event();
   e.synth = 1;
   e.patch_number = amyPatchNumber();
@@ -211,6 +252,7 @@ static void audioTask(void*) {
   cfg.max_buses = 1;
   cfg.max_sequencer_tags = 8;
   cfg.max_memory_patches = 2;
+  cfg.ks_oscs = 8;                    // one Karplus-Strong string per Pluck voice
   amy_start(cfg);
   amyLoadPatch();
   amyApplyReverb();
@@ -251,11 +293,14 @@ static void saveSoon() { g_saveAt = millis() + 2000; }
 static void loadSettings() {
   g_prefs.begin("camy", true);
   Settings s;
-  if (g_prefs.getBytesLength("set") == sizeof(Settings) && g_prefs.getBytes("set", &s, sizeof(s)) && s.version == 2)
+  if (g_prefs.getBytesLength("set") == sizeof(Settings) && g_prefs.getBytes("set", &s, sizeof(s)) && s.version == 3)
     g_set = s;
   g_prefs.end();
-  if (g_set.bank > BANK_PIANO) g_set.bank = BANK_JUNO;
-  if (g_set.voices[BANK_PIANO] > 6) g_set.voices[BANK_PIANO] = 6;
+  if (g_set.bank >= NUM_BANKS) g_set.bank = BANK_JUNO;
+  for (int b = 0; b < NUM_BANKS; b++) {
+    if (g_set.patch[b] >= bankSize(b)) g_set.patch[b] = 0;
+    if (g_set.voices[b] > maxVoices(b) || g_set.voices[b] < 1) g_set.voices[b] = maxVoices(b) < 6 ? maxVoices(b) : 6;
+  }
 }
 static void saveNow() {
   g_prefs.begin("camy", false);
@@ -277,11 +322,12 @@ static void toast(const String& s, uint32_t ms = 1500) { g_toast = s; g_toastUnt
 enum ParamId { P_BANK, P_PATCH, P_LEVEL, P_VOICES, P_CUTOFF, P_RES, P_REVERB, P_MIDICH, P_VOLUME, P_COUNT };
 static const char* const kParamNames[P_COUNT] = {"Bank", "Patch", "Bank Level", "Voices", "Filter Cutoff", "Filter Res",
                                                  "Reverb", "MIDI Channel", "Volume"};
-static const char* const kBankNames[3] = {"JUNO-6", "DX7", "PIANO"};
+static const char* const kBankNames[NUM_BANKS] = {"JUNO-6", "DX7", "PIANO", "PLUCK", "WAVETABLE", "ANALOG"};
 
 static void selectPatch(int bank, int idx) {
-  g_set.bank = (uint8_t)((bank % 3 + 3) % 3);
-  if (g_set.bank < 2) g_set.patch[g_set.bank] = (uint8_t)((idx % 128 + 128) % 128);
+  g_set.bank = (uint8_t)((bank % NUM_BANKS + NUM_BANKS) % NUM_BANKS);
+  int n = bankSize(g_set.bank);
+  g_set.patch[g_set.bank] = (uint8_t)((idx % n + n) % n);
   sendCmd(CMD_LOAD_PATCH);
   saveSoon();
   g_dirty = true;
@@ -290,7 +336,8 @@ static void selectPatch(int bank, int idx) {
 static String paramValue(int id) {
   switch (id) {
     case P_BANK:   return kBankNames[g_set.bank];
-    case P_PATCH:  return g_set.bank == BANK_PIANO ? String("-") : String(g_set.patch[g_set.bank] + 1);
+    case P_PATCH:  return bankSize(g_set.bank) == 1 ? String("-")
+                          : String(g_set.patch[g_set.bank] + 1) + "/" + bankSize(g_set.bank);
     case P_LEVEL:  return String(g_set.level[g_set.bank]) + "%";
     case P_VOICES: return String(g_set.voices[g_set.bank]);
     case P_CUTOFF: return g_set.cutoff == OVERRIDE_OFF ? String("PATCH") : String(g_set.cutoff);
@@ -306,15 +353,14 @@ static void changeParam(int id, int d) {
   auto clampi = [](int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); };
   switch (id) {
     case P_BANK: {
-      int nb = ((int)g_set.bank + (d > 0 ? 1 : 2)) % 3;
-      selectPatch(nb, nb < 2 ? g_set.patch[nb] : 0);
+      int nb = ((int)g_set.bank + (d > 0 ? 1 : NUM_BANKS - 1)) % NUM_BANKS;
+      selectPatch(nb, g_set.patch[nb]);
       return;
     }
-    case P_PATCH:  if (g_set.bank < 2) selectPatch(g_set.bank, g_set.patch[g_set.bank] + d); return;
+    case P_PATCH:  selectPatch(g_set.bank, g_set.patch[g_set.bank] + d); return;
     case P_LEVEL:  g_set.level[g_set.bank] = clampi(g_set.level[g_set.bank] + d * 5, 0, 250);
                    sendCmd(CMD_LEVEL); break;
-    case P_VOICES: g_set.voices[g_set.bank] = clampi(g_set.voices[g_set.bank] + (d > 0 ? 1 : -1), 1,
-                                                     g_set.bank == BANK_PIANO ? 6 : 10);
+    case P_VOICES: g_set.voices[g_set.bank] = clampi(g_set.voices[g_set.bank] + (d > 0 ? 1 : -1), 1, maxVoices(g_set.bank));
                    sendCmd(CMD_LOAD_PATCH); break;
     case P_CUTOFF: {  // PATCH sits above 127; stepping down from it starts at 127
       int v = g_set.cutoff == OVERRIDE_OFF ? 128 : g_set.cutoff;
@@ -339,7 +385,8 @@ static void changeParam(int id, int d) {
 }
 
 static uint16_t bankColor() {
-  return g_set.bank == BANK_JUNO ? 0xFC60 : (g_set.bank == BANK_DX7 ? 0x2D7F : 0x9E7F);
+  static const uint16_t kCol[NUM_BANKS] = {0xFC60, 0x2D7F, 0x9E7F, 0x8FE0, 0xF81F, 0xFFE0};
+  return kCol[g_set.bank];
 }
 
 static void draw() {
@@ -350,7 +397,6 @@ static void draw() {
   c.setFont(&fonts::Font0);
   c.setTextColor(TFT_BLACK, bankColor());
   char hdr[48];
-  int pn = amyPatchNumber();
   snprintf(hdr, sizeof(hdr), "AMY %s", kBankNames[g_set.bank]);
   c.drawString(hdr, 3, 3);
   char st[24];
@@ -362,8 +408,8 @@ static void draw() {
   c.setTextColor(TFT_WHITE, TFT_BLACK);
   c.setFont(&fonts::Font2);
   char pl[40];
-  if (g_set.bank == BANK_PIANO) snprintf(pl, sizeof(pl), "%s", kAmyPatchNames[256]);
-  else snprintf(pl, sizeof(pl), "%03d  %s", g_set.patch[g_set.bank] + 1, kAmyPatchNames[pn]);
+  if (bankSize(g_set.bank) == 1) snprintf(pl, sizeof(pl), "%s", patchName());
+  else snprintf(pl, sizeof(pl), "%03d  %s", g_set.patch[g_set.bank] + 1, patchName());
   c.drawString(pl, 4, 18);
   c.setFont(&fonts::Font0);
   c.setTextColor(0x8410, TFT_BLACK);
@@ -439,10 +485,10 @@ static void uiKey(char k) {
     case '/': changeParam(g_sel, +1); break;
     case '<': changeParam(g_sel, -10); break;
     case '?': changeParam(g_sel, +10); break;
-    case '[': if (g_set.bank < 2) selectPatch(g_set.bank, g_set.patch[g_set.bank] - 1); break;
-    case ']': if (g_set.bank < 2) selectPatch(g_set.bank, g_set.patch[g_set.bank] + 1); break;
-    case '{': if (g_set.bank < 2) selectPatch(g_set.bank, g_set.patch[g_set.bank] - 8); break;
-    case '}': if (g_set.bank < 2) selectPatch(g_set.bank, g_set.patch[g_set.bank] + 8); break;
+    case '[': selectPatch(g_set.bank, g_set.patch[g_set.bank] - 1); break;
+    case ']': selectPatch(g_set.bank, g_set.patch[g_set.bank] + 1); break;
+    case '{': selectPatch(g_set.bank, g_set.patch[g_set.bank] - 8); break;
+    case '}': selectPatch(g_set.bank, g_set.patch[g_set.bank] + 8); break;
     case '-': g_octave = max(-3, g_octave - 1); break;
     case '=': g_octave = min(3, g_octave + 1); break;
     case '`': {
@@ -531,7 +577,7 @@ void loop() {
   if (g_pendingProgram >= 0) {
     int p = g_pendingProgram;
     g_pendingProgram = -1;
-    if (g_set.bank < 2) selectPatch(g_set.bank, p);
+    selectPatch(g_set.bank, p);
   }
   if (g_saveAt && millis() > g_saveAt) saveNow();
 

@@ -133,6 +133,12 @@ the synth engine behind AMYboard and Tulip. Instead of my engines it uses AMY's
 own models and patch banks:
 
 - **128 Juno-6 patches** (A11–B88), **128 DX7 patches** and AMY's modelled **piano**
+- AMY's other engines, with patches written for this port:
+  - **Pluck** (6): Karplus-Strong strings: nylon, steel, harp, koto, muted, long
+  - **Wavetable** (8): AMY's PPG, Braids, 111, Sine→Saw and Viral wavetables, with
+    envelope- and LFO-driven wave scanning, unison pads, keys, bass, lead and bell
+  - **Analog** (8): raw oscillators: supersaw, square lead, sub bass, sync-style
+    lead, PWM strings, resonant bass, noise sweep, sine pad
 - AMY handles voice allocation, the Juno chorus, envelopes, velocity, sustain, bend and mod wheel
 - It renders on both CPU cores. The sketch hands AMY's 44.1 kHz blocks to the
   ES8311 through M5Unified, the same audio path as CardputerSynth.
@@ -141,7 +147,7 @@ Hardware setup is the same: Unit MIDI on the Grove port, set to **BYPASS**.
 
 | Key | Action |
 |---|---|
-| `Tab` | Next bank: Juno-6 → DX7 → Piano (each bank remembers its patch) |
+| `Tab` | Next bank: Juno-6 → DX7 → Piano → Pluck → Wavetable → Analog (each remembers its patch) |
 | `[` `]` | Previous / next patch; `{` `}` jump 8 |
 | `;` `.` / `Enter` | Move through the settings |
 | `,` `/` | Change the selected setting (Shift = ×10) |
@@ -160,6 +166,9 @@ in the current bank.
 Build: `pio run -d amy` (CI publishes `CardputerAMY-app.bin` / `-full.bin`).
 For the Arduino IDE, open `amy/CardputerAMY/CardputerAMY.ino`. Install the AMY
 library from GitHub at commit `9cdf615`; the patch-name table matches that version.
+The Wavetable bank needs AMY compiled with `AMY_WAVETABLE` defined. PlatformIO does
+this for you; in the Arduino IDE, add `#define AMY_WAVETABLE` at the top of the
+library's `src/amy.h`.
 
 The Cardputer has no PSRAM, so AMY runs with small pools: 160 oscillators
 (the piano needs about 20 per voice, so it's capped at 6 voices), chorus on and
