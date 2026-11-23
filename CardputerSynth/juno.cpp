@@ -119,7 +119,7 @@ void JunoEngine::controlChange(uint8_t cc, uint8_t val) {
   }
 }
 
-void JunoEngine::renderVoice(Voice& v, float* acc, int n, float lfo) {
+void DSP_HOT JunoEngine::renderVoice(Voice& v, float* acc, int n, float lfo) {
   const JunoPatch& p = patch;
 
   // --- pitch / DCO ---
@@ -174,8 +174,8 @@ void JunoEngine::renderVoice(Voice& v, float* acc, int n, float lfo) {
     } else if (stage == 3) {
       env -= env * relC;
     }
-    gEnv += (gateTarget - gEnv) * gateC;
-    float amp = gateMode ? gEnv : env;
+    float amp = env;
+    if (gateMode) { gEnv += (gateTarget - gEnv) * gateC; amp = gEnv; }
 
     // oscillators
     float x = 0.f;
@@ -216,7 +216,7 @@ void JunoEngine::renderVoice(Voice& v, float* acc, int n, float lfo) {
   if (!v.active) v.gEnv = 0.f;
 }
 
-void JunoEngine::render(float* out, int n) {
+void DSP_HOT JunoEngine::render(float* out, int n) {
   for (int i = 0; i < n; i++) out[i] = 0.f;
   const JunoPatch& p = patch;
 

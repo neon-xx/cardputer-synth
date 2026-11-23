@@ -5,6 +5,15 @@
 #include <math.h>
 #include <string.h>
 
+// Put the DSP hot path in internal RAM on the ESP32 so it doesn't stall on
+// flash-cache misses (the display code shares that cache).
+#if defined(ESP_PLATFORM)
+#include "esp_attr.h"
+#define DSP_HOT IRAM_ATTR
+#else
+#define DSP_HOT
+#endif
+
 namespace syn {
 
 constexpr int   SAMPLE_RATE = 48000;

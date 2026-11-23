@@ -125,7 +125,7 @@ static float egIncFor(int rate, int rateScale) {
   return (4 + (q & 3)) * (float)(1u << (2 + (q >> 2))) / 65536.f * (44100.f / SRF);
 }
 
-void Dx7Engine::Eg::advance(int n) {
+void DSP_HOT Dx7Engine::Eg::advance(int n) {
   for (int guard = 0; guard < 4; guard++) {
     if (stage == 4 || stage == 5) return;  // done / sustaining
     float tgt = target[stage];
@@ -401,7 +401,7 @@ void Dx7Engine::controlChange(uint8_t cc, uint8_t val) {
 static const float kPmsSemis[8] = {0.f, 0.15f, 0.3f, 0.5f, 0.8f, 1.4f, 2.8f, 12.f};
 static const float kAmsUnits[4] = {0.f, 170.f, 450.f, 1200.f};
 
-void Dx7Engine::renderVoice(Voice& v, float* acc, int n, float lfoPitch, float lfoAmp) {
+void DSP_HOT Dx7Engine::renderVoice(Voice& v, float* acc, int n, float lfoPitch, float lfoAmp) {
   const Alg& alg = s_alg[patch.alg];
   const float amd = patch.lamd / 99.f * lfoAmp;
 
@@ -475,7 +475,7 @@ void Dx7Engine::renderVoice(Voice& v, float* acc, int n, float lfoPitch, float l
   }
 }
 
-void Dx7Engine::render(float* out, int n) {
+void DSP_HOT Dx7Engine::render(float* out, int n) {
   for (int i = 0; i < n; i++) out[i] = 0.f;
   const Dx7Patch& p = patch;
   float lfoHz = 0.062f * fastExp2(p.lfs * 0.0975f);

@@ -29,6 +29,18 @@ jobs:
       - name: Build
         run: pio run -e cardputer-adv
 
+      - name: Inspect DSP hot path (diagnostics)
+        run: |
+          OBJDUMP=$(find ~/.platformio/packages -name "xtensa-esp32s3-elf-objdump" -o -name "xtensa-esp-elf-objdump" | head -n1)
+          ELF=.pio/build/cardputer-adv/firmware.elf
+          for fn in "JunoEngine::renderVoice" "Dx7Engine::renderVoice"; do
+            echo "=== $fn"
+            $OBJDUMP -d -C $ELF | awk -v f="$fn" '$0 ~ "<syn::"f && /:$/ {p=1} p && /^$/ {exit} p' > fn.txt
+            head -n1 fn.txt
+            echo "instructions: $(grep -c '^ *[0-9a-f]*:' fn.txt)"
+            echo "calls:"; grep -oE 'call[0-9x]* +[0-9a-f]+ <[^>]+>' fn.txt | sed 's/.*</</' | sort | uniq -c
+          done
+
       - name: Package binaries
         run: |
           B=.pio/build/cardputer-adv

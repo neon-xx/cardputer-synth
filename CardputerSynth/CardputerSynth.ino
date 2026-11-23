@@ -143,40 +143,52 @@ static void pollInputs() {
   while (xQueueReceive(g_evq, &e, 0) == pdTRUE) handleEvent(e);
 }
 
-static void audioTask(void*) {
-  static int16_t pcm[3][BLOCK];
+// Output chunks are OUT_BLOCKS engine blocks long. The next chunk is rendered
+// while the previous two are still queued/playing, so the codec always has
+// 2-3 chunks (~11-16 ms) in hand and small scheduling hiccups don't cause gaps.
+static constexpr int OUT_BLOCKS = 2;
+static constexpr int OUT_LEN = BLOCK * OUT_BLOCKS;
+
+static void DSP_HOT audioTask(void*) {
+  static int16_t pcm[3][OUT_LEN];
   static float   mix[BLOCK];
   int   bi = 0;
   float dcX = 0.f, dcY = 0.f;
   float limEnv = 0.f;                              // peak limiter envelope
   const float limRel = expf(-1.f / (0.25f * SAMPLE_RATE));  // 250 ms release
   const float limThresh = 0.8f;
-  const float blockUs = 1e6f * BLOCK / SAMPLE_RATE;
+  const float chunkUs = 1e6f * OUT_LEN / SAMPLE_RATE;
   for (;;) {
-    pollInputs();
-    while (M5.Speaker.isPlaying(0) >= 2) {  // one playing + one queued: wait
+    // 1) render the next chunk ahead of time
+    uint32_t t0 = micros();
+    for (int b = 0; b < OUT_BLOCKS; b++) {
+      pollInputs();
+      g_engine->render(mix, BLOCK);
+      int16_t* out = pcm[bi] + b * BLOCK;
+      for (int i = 0; i < BLOCK; i++) {
+        // DC blocker -> peak limiter -> soft clip
+        float x = mix[i];
+        dcY = x - dcX + 0.9987f * dcY;
+        dcX = x;
+        float a = fabsf(dcY);
+        limEnv = a > limEnv ? a : limEnv * limRel;
+        float y = limEnv > limThresh ? dcY * (limThresh / limEnv) : dcY;
+        out[i] = (int16_t)(softClip(y) * 30000.f);
+      }
+    }
+    uint32_t dt = micros() - t0;
+    float load = dt / chunkUs;
+    g_cpu = g_cpu * 0.9f + 0.1f * load;
+    // Falling behind: fade out the quietest released voice rather than let the
+    // audio run dry.
+    if (load > 0.8f || g_cpu > 0.75f) g_engine->shedVoice();
+
+    // 2) hand it to the codec as soon as there's a free queue slot
+    while (M5.Speaker.isPlaying(0) >= 2) {
       vTaskDelay(1);
       pollInputs();
     }
-    uint32_t t0 = micros();
-    g_engine->render(mix, BLOCK);
-    for (int i = 0; i < BLOCK; i++) {
-      // DC blocker -> peak limiter -> soft clip. The limiter keeps piled-up long
-      // releases from slamming into the clipper (which sounds like crackling).
-      float x = mix[i];
-      dcY = x - dcX + 0.9987f * dcY;
-      dcX = x;
-      float a = fabsf(dcY);
-      limEnv = a > limEnv ? a : limEnv * limRel;
-      float y = limEnv > limThresh ? dcY * (limThresh / limEnv) : dcY;
-      pcm[bi][i] = (int16_t)(softClip(y) * 30000.f);
-    }
-    uint32_t dt = micros() - t0;
-    g_cpu = g_cpu * 0.95f + 0.05f * (dt / blockUs);
-    // Falling behind (e.g. many long releases ringing at once): fade out the
-    // quietest released voice instead of letting the audio buffer run dry.
-    if (dt > 0.8f * blockUs || g_cpu > 0.75f) g_engine->shedVoice();
-    M5.Speaker.playRaw(pcm[bi], BLOCK, SAMPLE_RATE, false, 1, 0, false);
+    M5.Speaker.playRaw(pcm[bi], OUT_LEN, SAMPLE_RATE, false, 1, 0, false);
     bi = (bi + 1) % 3;
   }
 }
@@ -778,7 +790,8 @@ void setup() {
   dx7.loadPatch(g_bank[0]);
   g_engine = g_set.engine ? (Engine*)&dx7 : (Engine*)&juno;
 
-  xTaskCreatePinnedToCore(audioTask, "audio", 8192, nullptr, 5, nullptr, 0);
+  // Core 1: away from M5Unified's speaker task on core 0; priority above loop()
+  xTaskCreatePinnedToCore(audioTask, "audio", 8192, nullptr, 5, nullptr, 1);
 
   buildPage();
   toast(g_sdOk ? String("SD: ") + g_bankCount + " DX7 banks" : String("No SD card (DX7 internal bank)"), 2500);
@@ -815,11 +828,17 @@ void loop() {
   }
   if (g_settingsDirtyAt && millis() > g_settingsDirtyAt) saveSettingsNow();
 
+  // Redraw immediately after edits, otherwise ~6 fps for the meters. Screen
+  // drawing competes with the audio code for the flash cache, so keep it light.
   static uint32_t lastDraw = 0;
-  if (millis() - lastDraw > 50) {  // ~20 fps, keeps MIDI LED / voice count live
+  static bool lastLit = false;
+  bool lit = millis() - g_midiActivityMs < 120;
+  uint32_t since = millis() - lastDraw;
+  if ((g_dirty && since > 30) || lit != lastLit || since > 160 || (millis() < g_toastUntil + 200 && since > 100)) {
     lastDraw = millis();
+    lastLit = lit;
     draw();
     g_dirty = false;
   }
-  delay(2);
+  delay(5);
 }
