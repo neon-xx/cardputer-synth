@@ -168,7 +168,7 @@ The envelope controls are per bank and start on **PATCH**:
   controls scale them instead: Attack/Decay/Release multiply every operator's
   segment times (×0.1–×10) and Sustain scales their sustain levels.
 - **Piano:** not available (AMY's piano shapes its own decay).
-- Step below the minimum to return a control to PATCH.
+- Step below the minimum to return a control to PATCH; it stays there until you step up again.
 
 MIDI: notes, sustain, bend and mod wheel go to AMY. CC 74 / 71 set filter cutoff /
 resonance, CC 73 / 75 / 79 / 72 set attack / decay / sustain / release, CC 91 sets reverb, CC 7 sets volume, and program change selects a patch

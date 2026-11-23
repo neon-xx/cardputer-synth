@@ -445,7 +445,9 @@ static void changeParam(int id, int d) {
       if (g_set.bank == BANK_PIANO) return;
       int k = id - P_ATTACK;
       uint8_t& e = g_set.env[g_set.bank][k];
-      if (e == OVERRIDE_OFF) {  // leaving PATCH: start from a sensible value
+      if (e == OVERRIDE_OFF) {
+        if (d < 0) return;      // already at PATCH (the bottom): stay there
+        // leaving PATCH upwards: start from a sensible value
         static const uint8_t kAbsDefault[4] = {20, 70, 90, 55};
         e = g_set.bank == BANK_DX7 ? 64 : kAbsDefault[k];
       } else {
