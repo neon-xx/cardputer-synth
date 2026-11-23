@@ -161,8 +161,11 @@ Build: `pio run -d amy` (CI publishes `CardputerAMY-app.bin` / `-full.bin`).
 For the Arduino IDE, open `amy/CardputerAMY/CardputerAMY.ino`. Install the AMY
 library from GitHub at commit `9cdf615`; the patch-name table matches that version.
 
-The Cardputer has no PSRAM, so AMY runs with small pools: 100 oscillators,
-echo and partials off, and reverb and chorus on. Free memory is shown at startup.
+The Cardputer has no PSRAM, so AMY runs with small pools: 160 oscillators
+(the piano needs about 20 per voice, so it's capped at 6 voices), chorus on and
+echo off. AMY's own reverb needs about 110 KB of RAM, so it's replaced by a
+compact 18 KB reverb on the output, which the Reverb setting and CC 91 control.
+Free memory is shown at startup.
 
 ## Files
 

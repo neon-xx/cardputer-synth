@@ -16,6 +16,7 @@
 #include "midi_parser.h"
 #include "amy_patch_names.h"
 #include "amy_cmd.h"
+#include "small_reverb.h"
 
 extern "C" {
 void amy_event_midi_message_received(uint8_t* data, uint32_t len, uint8_t sysex);
@@ -100,7 +101,7 @@ static void amyApplyFilter() {
 // AMY's banks come out at very different raw levels, so each bank gets a base
 // gain on the output bus, times the user's per-bank Level trim.
 static void amyApplyLevel() {
-  static const float kBankGain[3] = {2.0f, 3.5f, 0.2f};
+  static const float kBankGain[3] = {2.0f, 3.5f, 1.1f};
   amy_event v = amy_default_event();
   v.volume = kBankGain[g_set.bank] * g_set.level[g_set.bank] / 100.f;
   amy_add_event(&v);
@@ -117,9 +118,10 @@ static void amyLoadPatch() {
   amyApplyFilter();  // re-apply the user's filter override, if any
 }
 
-static void amyApplyReverb() {
-  config_reverb(0, g_set.reverb / 127.f * 0.6f, 0.85f, 0.5f, 3000.f);
-}
+// Reverb runs on the mono output (SmallReverb) rather than AMY's own, which
+// needs ~110 KB of RAM the Cardputer doesn't have.
+static SmallReverb g_reverb;
+static void amyApplyReverb() {}
 
 static void amyMidi(uint8_t s, uint8_t d1, uint8_t d2, int len) {
   uint8_t m[3] = {s, d1, d2};
@@ -196,14 +198,14 @@ static void audioTask(void*) {
   cfg.midi = AMY_MIDI_IS_NONE;        // MIDI is parsed here and injected
   cfg.features.default_synths = 0;
   cfg.features.startup_bleep = 0;
-  cfg.features.partials = 0;
+  cfg.features.partials = 1;          // the piano is built from interpolated partials
   cfg.features.custom = 0;
   cfg.features.echo = 0;
-  cfg.features.reverb = 1;
+  cfg.features.reverb = 0;            // see SmallReverb
   cfg.features.chorus = 1;            // Juno patches use it
   cfg.platform.multithread = 0;       // render in this task...
   cfg.platform.multicore = 1;         // ...with half the oscillators on the other core
-  cfg.max_oscs = 100;                 // no PSRAM on the Cardputer: keep pools small
+  cfg.max_oscs = 160;                 // piano voices use ~20 oscs each; no PSRAM, so not more
   cfg.max_voices = 12;
   cfg.max_synths = 17;
   cfg.max_buses = 1;
@@ -224,6 +226,7 @@ static void audioTask(void*) {
     uint32_t t0 = micros();
     int16_t* st = amy_update();  // AMY_BLOCK_SIZE stereo frames, reused next call
     for (int i = 0; i < AMY_BLOCK_SIZE; i++) pcm[bi][i] = (int16_t)(((int32_t)st[2 * i] + st[2 * i + 1]) >> 1);
+    g_reverb.process(pcm[bi], AMY_BLOCK_SIZE, g_set.reverb / 127.f);
     float load = (micros() - t0) / blockUs;
     g_cpu = g_cpu * 0.9f + 0.1f * load;
     if (load > g_cpuPeak) g_cpuPeak = load;
@@ -252,6 +255,7 @@ static void loadSettings() {
     g_set = s;
   g_prefs.end();
   if (g_set.bank > BANK_PIANO) g_set.bank = BANK_JUNO;
+  if (g_set.voices[BANK_PIANO] > 6) g_set.voices[BANK_PIANO] = 6;
 }
 static void saveNow() {
   g_prefs.begin("camy", false);
@@ -309,7 +313,8 @@ static void changeParam(int id, int d) {
     case P_PATCH:  if (g_set.bank < 2) selectPatch(g_set.bank, g_set.patch[g_set.bank] + d); return;
     case P_LEVEL:  g_set.level[g_set.bank] = clampi(g_set.level[g_set.bank] + d * 5, 0, 250);
                    sendCmd(CMD_LEVEL); break;
-    case P_VOICES: g_set.voices[g_set.bank] = clampi(g_set.voices[g_set.bank] + (d > 0 ? 1 : -1), 1, 10);
+    case P_VOICES: g_set.voices[g_set.bank] = clampi(g_set.voices[g_set.bank] + (d > 0 ? 1 : -1), 1,
+                                                     g_set.bank == BANK_PIANO ? 6 : 10);
                    sendCmd(CMD_LOAD_PATCH); break;
     case P_CUTOFF: {  // PATCH sits above 127; stepping down from it starts at 127
       int v = g_set.cutoff == OVERRIDE_OFF ? 128 : g_set.cutoff;
