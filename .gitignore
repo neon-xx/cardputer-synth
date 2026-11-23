@@ -1,0 +1,7 @@
+.pio/
+.vscode/
+tools/out/
+tools/host_test
+tools/bench
+tools/fuzz
+tools/parser_test
