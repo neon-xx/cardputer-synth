@@ -57,7 +57,7 @@ z x c v b n m              <- C D E F G A B
 | `Backspace` | Panic (all notes off) |
 | `` ` `` (top-left key) | Rotate the screen (cycles through all four, remembered) |
 
-The header shows the patch, active voices, audio CPU load and a MIDI activity LED.
+The header shows the patch, active voices, audio CPU load, the peak load (`pk`) of the last thing you played, and a MIDI activity LED. To keep the audio clean, the screen doesn't update while notes are sounding, except when you press an editing key.
 
 ## The engines
 

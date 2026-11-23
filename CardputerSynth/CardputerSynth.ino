@@ -53,6 +53,7 @@ static Dx7Patch  g_pendingDx7;
 
 static volatile uint32_t g_midiActivityMs = 0;
 static volatile float    g_cpu = 0.f;
+static volatile float    g_cpuPeak = 0.f;  // highest chunk load since playback started
 static volatile int      g_pendingProgram = -1;
 static volatile bool     g_dumpReady = false;       // 32-voice dump received over MIDI
 static Dx7Patch          g_dumpBank[32];
@@ -179,6 +180,7 @@ static void DSP_HOT audioTask(void*) {
     uint32_t dt = micros() - t0;
     float load = dt / chunkUs;
     g_cpu = g_cpu * 0.9f + 0.1f * load;
+    if (load > g_cpuPeak) g_cpuPeak = load;
     // Falling behind: fade out the quietest released voice rather than let the
     // audio run dry.
     if (load > 0.8f || g_cpu > 0.75f) g_engine->shedVoice();
@@ -586,7 +588,7 @@ static void draw() {
     snprintf(hdr, sizeof(hdr), "DX7 %02d %s", g_voiceIdx + 1, dx7.patch.name);
   c.drawString(hdr, 3, 3);
   char st[24];
-  snprintf(st, sizeof(st), "V%d %2d%%", g_engine->activeVoices(), (int)(g_cpu * 100));
+  snprintf(st, sizeof(st), "V%d %2d%% pk%d%%", g_engine->activeVoices(), (int)(g_cpu * 100), (int)(g_cpuPeak * 100));
   c.drawRightString(st, W - 14, 3);
   bool midiLit = millis() - g_midiActivityMs < 120;
   c.fillCircle(W - 6, 7, 3, midiLit ? TFT_GREEN : 0x2104);
@@ -828,17 +830,22 @@ void loop() {
   }
   if (g_settingsDirtyAt && millis() > g_settingsDirtyAt) saveSettingsNow();
 
-  // Redraw immediately after edits, otherwise ~6 fps for the meters. Screen
-  // drawing competes with the audio code for the flash cache, so keep it light.
+  // While any voice is sounding the screen is frozen so drawing can't compete
+  // with the audio. Exceptions: a redraw right after you press a UI key (so
+  // editing still works). One refresh happens as soon as playback goes quiet.
   static uint32_t lastDraw = 0;
-  static bool lastLit = false;
-  bool lit = millis() - g_midiActivityMs < 120;
+  static bool wasPlaying = false;
+  bool playing = g_engine->activeVoices() > 0;
   uint32_t since = millis() - lastDraw;
-  if ((g_dirty && since > 30) || lit != lastLit || since > 160 || (millis() < g_toastUntil + 200 && since > 100)) {
+  bool want;
+  if (playing && !wasPlaying) g_cpuPeak = 0.f;  // new phrase: restart peak meter
+  if (playing) want = g_dirty;
+  else want = wasPlaying || g_dirty || since > 250 || millis() < g_toastUntil + 300;
+  if (want && since > 30) {
     lastDraw = millis();
-    lastLit = lit;
     draw();
     g_dirty = false;
   }
+  wasPlaying = playing;
   delay(5);
 }
